@@ -1,0 +1,28 @@
+{
+  "//": "Client-bundle typecheck + declaration emit. The client is a browser module-table consumer (react is the only value dependency, resolved by the web shell at runtime). It is excluded from the host tsconfig.json because it needs DOM lib + react types; tsdown bundles it (lib/client.js) and this config emits the shipped types surface (lib/types/client/*.d.ts).",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["react"],
+    "rootDir": "src/client",
+    "outDir": "lib/types/client"
+  },
+  "include": ["src/client"]
+}

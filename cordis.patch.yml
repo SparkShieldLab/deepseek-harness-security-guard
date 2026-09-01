@@ -1,0 +1,43 @@
+# Bundle patch for the agent-security-guard plugin.
+#
+# dsh composes each bundle's patch over an EMPTY entry list, then the user's
+# profile cordis.patch.yml, then any --patch overlays. A bundle patch must
+# therefore CREATE its entries with `- insert:`; an id-targeted entry (no
+# `insert`) only patches a row that already exists and is skipped with
+# `patch: entry not found` when it doesn't.
+#
+# This file ships the demo policy table; replace the `policies` with your own
+# rule set as needed. You can still override rows per-profile from your
+# profile's cordis.patch.yml (deduped by id; last writer wins).
+#
+# Note: multiple rules within one policy are OR semantics — any rule hit
+# triggers the policy. When you need "all conditions met simultaneously",
+# split into multiple policies (each with a single rule), or use a single
+# combined field (e.g. contains on arguments directly instead of
+# command/path).
+
+- insert:
+    - id: agent-security-guard
+      name: '@spark-shield-lab/deepseek-harness-security-guard'
+      config:
+        failOpen: true
+        hooks:
+          toolsPreExecute: true
+          toolsPostExecute: true
+          toolsResult: true
+          agentPreStep: true
+          agentTurnStopping: true
+          agentSessionStart: true
+          subagentLifecycle: true
+          toolsGuard: true
+        policies:
+          # Wildcard: all rm* command require human approval
+          - id: ask-on-rm
+            hooks: [tools/pre-execute]
+            priority: 100
+            action: ask
+            message: demo rule rm operations require human confirmation
+            rules:
+              - field: command
+                operator: matches
+                value: 'rm*'
