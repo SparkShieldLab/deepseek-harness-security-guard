@@ -109,7 +109,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/qr_code.png" alt="微信群二维码" width="220" />
+  <img src="docs/assets/qr_code.jpeg" alt="微信群二维码" width="220" />
 </p>
 
 ## 开源协议

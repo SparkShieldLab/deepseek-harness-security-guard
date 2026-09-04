@@ -115,7 +115,7 @@ The Yangtze River Delta Safe Artificial Intelligence Anhui Laboratory is dedicat
 </p>
 
 <p align="center">
-  <img src="docs/assets/qr_code.png" alt="WeChat group QR code" width="220" />
+  <img src="docs/assets/qr_code.jpeg" alt="WeChat group QR code" width="220" />
 </p>
 
 ## License
