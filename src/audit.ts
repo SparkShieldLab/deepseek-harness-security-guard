@@ -374,12 +374,39 @@ export function clearVerdictLog(logPath: string): void {
 }
 
 /**
+ * Read a session's event log across `dsh-session` API versions. Older releases
+ * exposed it through the `events` getter; current releases dropped that getter
+ * in favour of the `snapshotEvents()` method (with `ownEvents()` for the
+ * fork-owned prefix-free view). Prefer whichever shape the live face owns and
+ * degrade to `undefined` — never throw — when the log is not yet materialized.
+ * @param session - a harness session face, or anything else.
+ * @returns the event array in log order, or `undefined` when unavailable.
+ */
+export function sessionEventsOf(session: unknown): readonly unknown[] | undefined {
+  if (session === null || typeof session !== 'object') return undefined
+  const face = session as { events?: unknown; snapshotEvents?: unknown; ownEvents?: unknown }
+  if (Array.isArray(face.events)) return face.events
+  for (const read of [face.snapshotEvents, face.ownEvents]) {
+    if (typeof read !== 'function') continue
+    try {
+      const events = (read as () => unknown).call(session)
+      if (Array.isArray(events)) return events
+    } catch {
+      // a session mid-replacement must degrade, not throw into the hook path
+    }
+  }
+  return undefined
+}
+
+/**
  * The current turn number, derived from the last `turn/start` in the session
  * log (tool hooks carry no turn in their payload).
  */
-export function currentTurn(session: { events: readonly unknown[] } | undefined): number | undefined {
-  if (session === undefined) return undefined
-  const events = session.events
+export function currentTurn(session: unknown): number | undefined {
+  const events = sessionEventsOf(session)
+  // A session face whose event log is not (yet) materialized must degrade to
+  // a turnless lookup instead of throwing into the hook path.
+  if (events === undefined) return undefined
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i] as { type?: unknown; data?: { turn?: unknown } } | undefined
     if (event?.type === 'turn/start') {

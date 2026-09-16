@@ -46,6 +46,8 @@ import { GuardEngine } from './engine.ts'
 import { baselinePolicies } from './base-policies.ts'
 import { GuardStateStore } from './state-store.ts'
 import { resolve } from 'node:path'
+import { resolvePlatform } from './platform.ts'
+import { setActiveThreatCatalog } from './threat-catalog.ts'
 import { PolicyFileStore, policyStorePaths } from './policy-store.ts'
 import { registerGuardApi } from './guard-api.ts'
 import { recordModelReview } from './audit.ts'
@@ -70,6 +72,12 @@ export const name = 'agent-security-guard'
  * @param config - validated {@link Config}; `policies` is re-checked fail-loud here.
  */
 export function apply(ctx: Context, config: Config): void {
+  // Arm the platform-adaptive threat catalogue BEFORE any listener can run:
+  // `auto` follows the host OS, an explicit value forces one family. Feature
+  // extraction reads the armed catalogue from then on.
+  const platform = resolvePlatform(config.platform)
+  setActiveThreatCatalog(platform)
+
   // The schema's .default() guarantees these are set after validation.
   const base = (config.basePolicies ?? true) ? baselinePolicies() : []
   const policies = [...base, ...(config.policies ?? [])]
@@ -244,5 +252,5 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   ctx.logger.info(`[agent-security-guard] loaded ${policies.length} policies (${base.length} baseline, `
-    + `failOpen=${config.failOpen ?? true}, policy file bus: ${storePaths.uiPoliciesPath})`)
+    + `failOpen=${config.failOpen ?? true}, platform=${platform}, policy file bus: ${storePaths.uiPoliciesPath})`)
 }

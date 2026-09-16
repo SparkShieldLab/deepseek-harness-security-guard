@@ -25,17 +25,32 @@ import {
 } from './normalize.ts'
 import { decodeEncodedCandidates } from './decode.ts'
 import {
-  DELETE_VERBS, FIND_DELETE_RE, HIGH_RISK_COMPACT_PATTERNS, HIGH_RISK_HEAD_PATTERNS,
-  HIGH_RISK_PATTERNS, HOME_RC_TOKENS, OBFUSCATION_PATTERNS, OUTBOUND_PATTERNS,
-  PROTECTED_PATH_TOKENS, SCRIPT_EXTENSIONS, SECRET_REF_PATTERNS, SHEBANG_RE,
-  SHELL_RC_TRUNCATION_PATTERNS, TRANSFORM_PATTERNS, INJECTION_RULES, SPECIAL_TOKENS,
+  SCRIPT_EXTENSIONS, SECRET_REF_PATTERNS, SHEBANG_RE, TRANSFORM_PATTERNS,
+  INJECTION_RULES, SPECIAL_TOKENS,
 } from './patterns.ts'
-import { resolve, normalize } from 'node:path'
+import { activeThreatCatalog } from './threat-catalog.ts'
+import type { ThreatCatalog } from './threat-catalog.ts'
+import { detectPlatform } from './platform.ts'
+import { posix, win32 } from 'node:path'
+import type { PlatformPath } from 'node:path'
 import os from 'node:os'
 import { collectSecrets, secretVariants } from './secrets.ts'
 import { deriveCommandThreatFeatures } from './command-threats.ts'
 import { REPEAT_CALL_BUDGET } from './state-store.ts'
 import type { GuardStateStore } from './state-store.ts'
+
+/** The active threat-rule catalogue (platform-adaptive). */
+function catalog(): ThreatCatalog {
+  return activeThreatCatalog()
+}
+
+/** Path implementation matching the HOST filesystem dialect. The path dialect
+ * follows the actual OS, never the armed rule catalogue: a forced `win32`
+ * catalogue on a Linux host still sees Linux paths, and vice versa. */
+function pathApi(): PlatformPath {
+  return detectPlatform() === 'win32' ? win32 : posix
+}
+
 
 
 /** Argument keys that carry a shell command (checked in order). */
@@ -81,7 +96,8 @@ function shellPathTokens(command: string): string[] {
   const tokens: string[] = []
   const unquoted = command.replace(/['"`]/g, '')
   for (const raw of unquoted.split(/[\s"'`;|&()]+/)) {
-    if (raw.length > 0 && (raw.includes('/') || raw.startsWith('~'))) tokens.push(raw)
+    // Both dialects: POSIX (`/…`, `~…`) and Windows (`…\…`, `C:\…`).
+    if (raw.length > 0 && (raw.includes('/') || raw.includes('\\') || raw.startsWith('~'))) tokens.push(raw)
   }
   return tokens
 }
@@ -102,13 +118,14 @@ function pathCandidates(args: Record<string, unknown>, command: string): string[
  * candidates so workspace-local `.profile` files do not false-positive.
  */
 export function resolveProtectedPathHit(args: Record<string, unknown>, command: string): string | undefined {
+  const c = catalog()
   for (const candidate of pathCandidates(args, command)) {
     const normalized = normalizeText(candidate)
-    for (const token of PROTECTED_PATH_TOKENS) {
+    for (const token of c.protectedPathTokens) {
       if (normalized.includes(token)) return candidate
     }
-    if (candidate.startsWith('~') || candidate.startsWith('/') || candidate.startsWith('$')) {
-      for (const token of HOME_RC_TOKENS) {
+    if (candidate.startsWith('~') || candidate.startsWith('\\') || candidate.startsWith('/') || candidate.startsWith('$')) {
+      for (const token of c.homeRcTokens) {
         if (normalized.includes(token)) return candidate
       }
     }
@@ -130,8 +147,12 @@ export function resolveDeletion(
   workspaceRoot: string,
   homeDir: string = os.homedir(),
 ): { targets: string[]; outsideWorkspace: boolean } {
+  const c = catalog()
   const targets: string[] = []
-  const root = workspaceRoot.endsWith('/') ? workspaceRoot.slice(0, -1) : workspaceRoot
+  const root =
+    workspaceRoot.endsWith('/') || workspaceRoot.endsWith('\\')
+      ? workspaceRoot.slice(0, -1)
+      : workspaceRoot
   const rootFold = foldCase(root)
   let base = root
 
@@ -153,16 +174,16 @@ export function resolveDeletion(
         else base = homeDir
         continue
       }
-      if (DELETE_VERBS.includes(head())) {
-        pushDeletionTargets(tokens, i + 1, base, root, homeDir, targets)
+      if (c.deleteVerbs.includes(head().toLowerCase())) {
+        pushDeletionTargets(tokens, i + 1, base, root, homeDir, targets, c.deleteVerbs)
         continue
       }
-      if (head() === 'gio' && tokens[i + 1] === 'trash') {
-        pushDeletionTargets(tokens, i + 2, base, root, homeDir, targets)
+      if (head().toLowerCase() === 'gio' && tokens[i + 1] === 'trash') {
+        pushDeletionTargets(tokens, i + 2, base, root, homeDir, targets, c.deleteVerbs)
       }
     }
   }
-  if (FIND_DELETE_RE.test(normalizeText(command))) {
+  if (c.findDelete.test(normalizeText(command))) {
     const m = /\bfind\s+([^\s]+)/.exec(command)
     if (m?.[1] !== undefined) {
       const resolved = expandAndResolve(unquote(m[1]), base, root, homeDir)
@@ -172,7 +193,7 @@ export function resolveDeletion(
 
   let outsideWorkspace = false
   for (const target of targets) {
-    if (outsideOfRoot(target, root, rootFold)) { outsideWorkspace = true; break }
+    if (outsideOfRoot(target, rootFold)) { outsideWorkspace = true; break }
   }
   return { targets, outsideWorkspace }
 }
@@ -230,19 +251,24 @@ function expandAndResolve(token: string, base: string, root: string, homeDir: st
   const sub = /\$\(([^()]*)\)/.exec(t)
   if (sub?.[1] !== undefined && sub[1].length > 0) {
     const inner = expandAndResolve(sub[1], base, root, homeDir)
-    if (inner !== undefined && outsideOfRoot(inner, root, foldCase(root))) return inner
+    if (inner !== undefined && outsideOfRoot(inner, foldCase(root))) return inner
   }
   try {
-    return normalize(resolve(base, t))
+    const p = pathApi()
+    return p.normalize(p.resolve(base, t))
   } catch {
     return undefined
   }
 }
 
 /** Whether a resolved absolute path is outside the workspace root (case-folded compare). */
-function outsideOfRoot(target: string, root: string, rootFold: string): boolean {
-  if (target === root || target === `${root}/`) return false
-  return !foldCase(target).startsWith(`${rootFold}/`)
+function outsideOfRoot(target: string, rootFold: string): boolean {
+  // win32's path.normalize emits `\` separators; fold both sides to `/` so a
+  // Windows-native root (`C:\proj`) still prefix-matches its resolved targets.
+  const t = foldCase(target).replace(/\\/g, '/')
+  const r = rootFold.replace(/\\/g, '/')
+  if (t === r || t === `${r}/`) return false
+  return !t.startsWith(`${r}/`)
 }
 
 /**
@@ -298,11 +324,15 @@ function pushDeletionTargets(
   root: string,
   homeDir: string,
   targets: string[],
+  verbs: readonly string[],
 ): void {
   for (let i = from; i < tokens.length; i++) {
     const token = tokens[i] ?? ''
     if (token.length === 0 || token.startsWith('-')) continue
-    if (DELETE_VERBS.includes(token) || token === 'gio') break
+    // Windows slash-switches (`del /f /q x`) are flags, not targets; POSIX
+    // absolute paths (`/etc`) are real targets, so gate this on the host.
+    if (detectPlatform() === 'win32' && /^\/[a-z]+$/i.test(token)) continue
+    if (verbs.includes(token.toLowerCase()) || token.toLowerCase() === 'gio') break
     const resolved = expandAndResolve(token, base, root, homeDir)
     if (resolved !== undefined) targets.push(resolved)
     if (targets.length >= 8) break
@@ -326,8 +356,9 @@ function hitsHighRisk(text: string, workspaceRoot?: string): boolean {
  * command, to encoded payloads and to script CONTENT. */
 function hitsHighRiskText(text: string, workspaceRoot?: string): boolean {
   const { plain } = scanViews(text)
-  return HIGH_RISK_PATTERNS.some((re) => re.test(plain))
-    || SHELL_RC_TRUNCATION_PATTERNS.some((re) => re.test(plain))
+  const c = catalog()
+  return c.highRisk.some((re) => re.test(plain))
+    || c.shellRcTruncation.some((re) => re.test(plain))
     || compactDeleteIsDangerous(text, workspaceRoot)
 }
 
@@ -339,13 +370,14 @@ function hitsHighRiskText(text: string, workspaceRoot?: string): boolean {
  * resolves outside the workspace; in-workspace deletes or non-deletes fall
  * through to allow. With no known workspace root the check fails safe. */
 function compactDeleteIsDangerous(command: string, workspaceRoot?: string): boolean {
-  if (!HIGH_RISK_COMPACT_PATTERNS.some((re) => re.test(denseText(command)))) return false
+  const c = catalog()
+  if (!c.highRiskCompact.some((re) => re.test(denseText(command)))) return false
   if (workspaceRoot === undefined) return true
   const cleaned = cleanDeleteCommand(command)
   // N13a: whole-text glob/system rows (`rm -rf *`, `rm -rf /*`, `rm -rf ~`)
   // are dangerous regardless of workspace resolution. The letter-spaced verb
   // form has been re-spaced by cleanDeleteCommand, so the literal rows now hit.
-  if (HIGH_RISK_PATTERNS.some((re) => re.test(normalizeText(cleaned)))) return true
+  if (c.highRisk.some((re) => re.test(normalizeText(cleaned)))) return true
   const resolved = resolveDeletion(cleaned, workspaceRoot)
   // N13c: an unresolved `$VAR` deletion target could expand anywhere at shell
   // time; treat it as dangerous (fail-safe) rather than assume a workspace path.
@@ -394,7 +426,7 @@ function hitsHeadHighRisk(normalized: string): boolean {
       else break
     }
     if (rest === '') continue
-    if (HIGH_RISK_HEAD_PATTERNS.some((re) => re.test(rest))) return true
+    if (catalog().highRiskHead.some((re) => re.test(rest))) return true
   }
   return false
 }
@@ -403,7 +435,7 @@ function hitsHeadHighRisk(normalized: string): boolean {
 function hitsObfuscation(text: string): boolean {
   if (hasInvisibleChars(text)) return true
   const { plain } = scanViews(text)
-  return OBFUSCATION_PATTERNS.some((re) => re.test(plain))
+  return catalog().obfuscation.some((re) => re.test(plain))
 }
 
 /** Outbound network egress. `echo`/`printf` first tokens only print,
@@ -413,7 +445,7 @@ function hitsOutbound(command: string): boolean {
   const normalized = normalizeText(command)
   const first = normalized.split(/\s+/)[0] ?? ''
   if ((first === 'echo' || first === 'printf') && !/[\|<>]/.test(normalized)) return false
-  return OUTBOUND_PATTERNS.some((re) => re.test(normalized))
+  return catalog().outbound.some((re) => re.test(normalized))
 }
 
 /** Whether text references a secret. */
@@ -435,14 +467,13 @@ function hitsTransform(text: string): boolean {
  * and reference the recorded path or its basename, or start with `./x.sh`
  * directly. `sudo`/`env`/`time` prefixes are skipped.
  */
-const EXEC_HEADS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'python', 'python3', 'node', 'ruby', 'perl', 'php', 'source', 'exec'])
-
 function commandExecutesPath(command: string, path: string): boolean {
-  const base = path.split('/').pop()
+  const base = path.split(/[\\/]/).pop()
   if (base === undefined || base.length === 0) return false
   const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  // `bash ./x.sh` or `bash /abs/x.sh` → basename preceded by `/` or whitespace.
-  const baseInSegment = new RegExp(`(?:^|[\\s;&|()/])${escaped}(?:$|[\\s;&|()])`)
+  // `bash ./x.sh` or `bash /abs/x.sh` → basename preceded by `/`/`\` or whitespace.
+  const baseInSegment = new RegExp(`(?:^|[\\s;&|()\\\\/])${escaped}(?:$|[\\s;&|()])`)
+  const execHeads = new Set(catalog().execHeads)
   for (const segment of command.split(/[;&|()\n]+/)) {
     let trimmed = segment.trim().replace(/^(?:sudo|env|time)\s+/, '')
     if (trimmed === '') continue
@@ -451,7 +482,7 @@ function commandExecutesPath(command: string, path: string): boolean {
     if (head.startsWith('./') && new RegExp(`\\.\\/${escaped}(?:$|[\\s;&|()])`).test(trimmed)) return true
     // source shorthand: `. x.sh`
     if (head === '.' && baseInSegment.test(trimmed)) return true
-    if (!EXEC_HEADS.has(head)) continue
+    if (!execHeads.has(head)) continue
     if (trimmed.includes(path) || baseInSegment.test(trimmed)) return true
   }
   return false

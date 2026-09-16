@@ -31,9 +31,12 @@
           subagentLifecycle: true
           toolsGuard: true
         policies:
-          # Wildcard: all rm* command require human approval
+          # Demo custom policy: every rm* command would require human approval.
+          # Shipped DISABLED by default (`enabled: false`) so a fresh install is
+          # never blocked on it; turn it on from the panel's Rule Config tab.
           - id: ask-on-rm
             hooks: [tools/pre-execute]
+            enabled: false
             priority: 100
             action: ask
             message: demo rule rm operations require human confirmation

@@ -2,6 +2,8 @@
 
 完整的规则字段、算子、动作、内置基线防线与运行时语义。架构级细节（hook 映射、决策引擎、面板生命周期、文件总线）见 [architecture.md](./architecture.zh-CN.md)。
 
+每条规则在 Windows / Linux / macOS 三个平台的命中用例与防护场景，见 [rule-platform-matrix.zh-CN.md](./rule-platform-matrix.zh-CN.md)。
+
 策略是带 `action` 与 `priority` 的有序条目；其 `rules` 采用 **OR** 语义（任一规则命中即触发）。策略表通过 `cordis.yml` 的 `config.policies` 注入，`apply` 前由 schemastery schema 校验。
 
 ## 规则字段（`field`）

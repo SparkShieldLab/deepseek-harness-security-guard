@@ -41,7 +41,7 @@ import { GuardEngine } from './engine.ts'
 import type { HookSwitches } from './config.ts'
 import type { GuardDecision, GuardEvent } from './types.ts'
 import type { SessionRoute } from './model-review.ts'
-import { currentTurn, recordVerdict } from './audit.ts'
+import { currentTurn, recordVerdict, sessionEventsOf } from './audit.ts'
 import { deriveUserIntentFeatures } from './intent.ts'
 import { buildPromptGuardSection } from './prompt-guard.ts'
 import {
@@ -617,6 +617,21 @@ async function resolveDecision(
   return engine.decide(event)
 }
 
+/**
+ * Turn lookup that can never throw into the hook path. `currentTurn` degrades
+ * a session face whose event log is not (yet) materialized — or that exposes it
+ * through a different `dsh-session` API shape — to a turnless (undefined) turn
+ * instead of a TypeError; the guard's decision and verdict recording both
+ * tolerate an undefined turn.
+ */
+function safeTurn(agent: unknown): number | undefined {
+  try {
+    return currentTurn((agent as { session?: unknown } | null | undefined)?.session)
+  } catch {
+    return undefined
+  }
+}
+
 /** Register every enabled listener on the context. All listeners are scoped to `ctx` and disposed with it. */
 export function registerListeners(ctx: Context, engine: GuardEngine, hooks: HookSwitches, options: AdapterOptions): void {
   if (hooks.toolsPreExecute !== false) {
@@ -630,7 +645,7 @@ export function registerListeners(ctx: Context, engine: GuardEngine, hooks: Hook
       const userText = recentUserTextOf(exec.agent)
       if (userText.length > 0) event.data.userQuery = userText
       const sessionKey = exec.agent?.id
-      const turn = currentTurn(exec.agent?.session)
+      const turn = safeTurn(exec.agent)
       // Static feature extraction is independent of session/turn bookkeeping;
       // it must never be skipped just because a turn is not yet established in
       // the session log (see S5).
@@ -700,7 +715,7 @@ export function registerListeners(ctx: Context, engine: GuardEngine, hooks: Hook
         decision,
         tool: exec.name,
         callId: exec.callId,
-        turn: currentTurn(exec.agent?.session),
+        turn: safeTurn(exec.agent),
       }, options.verdictLogPath, { recordAllow: options.recordAllow?.() ?? false })
       return applyPostToolDecision(ctx, decision, next, options.lang?.() ?? 'en')
     })
@@ -722,7 +737,7 @@ export function registerListeners(ctx: Context, engine: GuardEngine, hooks: Hook
             decision,
             tool: exec.name,
             callId: exec.callId,
-            turn: currentTurn(exec.agent?.session),
+            turn: safeTurn(exec.agent),
           }, options.verdictLogPath, { recordAllow: options.recordAllow?.() ?? false })
         } catch (error) {
           ctx.logger.warn(`${PREFIX} tools/result review failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -942,7 +957,7 @@ export function registerListeners(ctx: Context, engine: GuardEngine, hooks: Hook
             decision,
             tool: exec.name,
             callId: exec.callId,
-            turn: currentTurn(exec.agent?.session),
+            turn: safeTurn(exec.agent),
           }, options.verdictLogPath, { recordAllow: options.recordAllow?.() ?? false })
           return reason(decision, 'tool call blocked', options.lang?.() ?? 'en')
         }
@@ -976,7 +991,8 @@ const STOP_STEER_CAP = 3
  */
 function lastAssistantText(agent: Agent): string {
   try {
-    const events = agent.session.events as readonly unknown[]
+    const events = sessionEventsOf(agent.session)
+    if (events === undefined) return ''
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i] as { type?: unknown; data?: { message?: { content?: unknown } } } | undefined
       if (event?.type !== 'assistant/message') continue
@@ -1013,11 +1029,11 @@ function extractBlocksText(blocks: unknown): string {
  * here. Scans backwards for the latest `user/message`; empty when none exists.
  */
 function recentUserTextOf(agent: {
-  session?: { events?: readonly unknown[] | undefined } | undefined
+  session?: unknown
 } | null | undefined): string {
   try {
-    const events = agent?.session?.events as readonly unknown[] | undefined
-    if (!Array.isArray(events)) return ''
+    const events = sessionEventsOf(agent?.session)
+    if (events === undefined) return ''
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i] as { type?: unknown; data?: { content?: unknown } } | undefined
       if (event?.type !== 'user/message') continue

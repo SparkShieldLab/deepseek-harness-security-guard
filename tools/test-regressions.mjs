@@ -8,6 +8,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import {
   deriveToolCallFeatures, deriveToolResultFeatures, deriveStatefulFeatures,
   isReadOnlyCommand, resolveDeletion,
@@ -18,7 +19,7 @@ import { collectSecrets, looksSensitiveValue } from '../lib/secrets.js'
 import { baselinePolicies } from '../lib/base-policies.js'
 import { deriveUserIntentFeatures } from '../lib/intent.js'
 
-const WS = '/Users/Dev/MyProject'
+const WS = path.resolve('/Users/Dev/MyProject')
 
 function decideCommand(command, root = WS) {
   const engine = new GuardEngine(baselinePolicies())
@@ -44,7 +45,7 @@ test('B3.1: letter-spaced rm -rf with a prefix is still caught', () => {
 // B3.2 — outside-workspace deletion path resolution
 // ---------------------------------------------------------------------------
 test('B3.2: relative, cd-prefixed and $HOME deletion targets resolve outside the workspace', () => {
-  const root = '/home/u/proj'
+  const root = path.resolve('/home/u/proj')
   assert.equal(resolveDeletion('rm -rf ../outside', root).outsideWorkspace, true)
   assert.equal(resolveDeletion('rm -rf ../../../etc/hosts', root).outsideWorkspace, true)
   assert.equal(resolveDeletion('cd /tmp && rm -rf outside', root).outsideWorkspace, true)
@@ -57,15 +58,15 @@ test('B4#5: a case-sensitive workspace root is never misjudged (macOS)', () => {
   // Regression: the command was lowercased before target extraction while the
   // root stayed original-case, so `rm -rf /Users/Dev/MyProject/build` was
   // flagged as outside the workspace on macOS.
-  assert.equal(resolveDeletion('rm -rf /Users/Dev/MyProject/build', '/Users/Dev/MyProject').outsideWorkspace, false)
-  assert.equal(deriveToolCallFeatures({ command: 'rm -rf /Users/Dev/MyProject/build' }, { workspaceRoot: '/Users/Dev/MyProject' }).deleteOutsideWorkspace, undefined)
-  assert.equal(deriveToolCallFeatures({ command: 'rm -rf /Users/Dev/MyProject/build' }, { workspaceRoot: '/Users/Dev/MyProject' }).deleteTargets?.length, 1)
+  assert.equal(resolveDeletion('rm -rf /Users/Dev/MyProject/build', WS).outsideWorkspace, false)
+  assert.equal(deriveToolCallFeatures({ command: 'rm -rf /Users/Dev/MyProject/build' }, { workspaceRoot: WS }).deleteOutsideWorkspace, undefined)
+  assert.equal(deriveToolCallFeatures({ command: 'rm -rf /Users/Dev/MyProject/build' }, { workspaceRoot: WS }).deleteTargets?.length, 1)
 })
 
 test('N1: in-workspace rm -rf is not high-risk; outside/root deletes still are', () => {
   const inWs = ['rm -rf build', 'rm -rf node_modules', 'rm -rf build dist', 'rm -rf /Users/Dev/MyProject/build']
   for (const cmd of inWs) {
-    assert.equal(deriveToolCallFeatures({ command: cmd }, { workspaceRoot: '/Users/Dev/MyProject' }).highRisk, undefined,
+    assert.equal(deriveToolCallFeatures({ command: cmd }, { workspaceRoot: WS }).highRisk, undefined,
       `${cmd} must not be high-risk inside the workspace`)
   }
   const outside = [
@@ -74,11 +75,11 @@ test('N1: in-workspace rm -rf is not high-risk; outside/root deletes still are',
     '(cd /; rm -rf x)',
   ]
   for (const cmd of outside) {
-    assert.equal(deriveToolCallFeatures({ command: cmd }, { workspaceRoot: '/home/u/proj' }).highRisk, true,
+    assert.equal(deriveToolCallFeatures({ command: cmd }, { workspaceRoot: path.resolve('/home/u/proj') }).highRisk, true,
       `${cmd} must stay high-risk`)
   }
   // A substring that merely contains "rmr" (`armrest`) is not a delete at all.
-  assert.equal(deriveToolCallFeatures({ command: 'git commit -m "armrest design"' }, { workspaceRoot: '/home/u/proj' }).highRisk, undefined)
+  assert.equal(deriveToolCallFeatures({ command: 'git commit -m "armrest design"' }, { workspaceRoot: path.resolve('/home/u/proj') }).highRisk, undefined)
 })
 
 test('N13: deletion-gate residuals — glob, mid-command subshell, unknown $VAR', () => {
@@ -88,10 +89,10 @@ test('N13: deletion-gate residuals — glob, mid-command subshell, unknown $VAR'
     'rm -rf $EXFIL', 'rm -rf ${EXFIL}',
   ]
   for (const cmd of outside) {
-    assert.equal(deriveToolCallFeatures({ command: cmd }, { workspaceRoot: '/Users/Dev/MyProject' }).highRisk, true,
+    assert.equal(deriveToolCallFeatures({ command: cmd }, { workspaceRoot: WS }).highRisk, true,
       `${cmd} must stay high-risk`)
   }
-  assert.equal(deriveToolCallFeatures({ command: 'rm -rf build' }, { workspaceRoot: '/Users/Dev/MyProject' }).highRisk, undefined,
+  assert.equal(deriveToolCallFeatures({ command: 'rm -rf build' }, { workspaceRoot: WS }).highRisk, undefined,
     'in-workspace rm -rf must still be clean')
 })
 

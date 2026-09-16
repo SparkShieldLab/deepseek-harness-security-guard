@@ -17,6 +17,7 @@ import type { GuardAction, GuardOperator, GuardPolicy } from './types.ts'
 import type { GuardMode } from './types.ts'
 import { canonicalHook, type ReviewTemplateHook } from './hooks.ts'
 import { BASELINE_REVIEW_TEMPLATES } from './audit-prompts.ts'
+import type { GuardPlatformConfig } from './platform.ts'
 
 /**
  * Per-hook enable switches, keyed by native harness seam name. Defaults: every
@@ -82,6 +83,12 @@ export interface Config {
   basePolicies?: boolean
   /** Workspace root for path-scoped guards (deletion outside workspace, …). Default: process.cwd(). */
   workspaceRoot?: string
+  /**
+   * Rule-family adaptation. `'auto'` (default) follows the host OS; an explicit
+   * `'win32' | 'linux' | 'darwin'` forces one catalogue (rare; for cross-shell
+   * or test deployments). See `platform.ts` / `threat-catalog.ts`.
+   */
+  platform?: GuardPlatformConfig
   /** Per-hook enable switches. Default: every hook on. */
   hooks?: HookSwitches
   /** Engine-default posture; `monitor` downgrades block/ask to warn. Default `'protect'`. */
@@ -149,6 +156,12 @@ export const Config: z<Config> = z.object({
   promptBlockNotice: z.boolean().default(true),
   basePolicies: z.boolean().default(true),
   workspaceRoot: z.string(),
+  platform: z.union([
+    z.const('auto'),
+    z.const('win32'),
+    z.const('linux'),
+    z.const('darwin'),
+  ]).default('auto'),
   hooks: z.object({
     toolsPreExecute: z.boolean().default(true),
     toolsPostExecute: z.boolean().default(true),

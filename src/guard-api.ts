@@ -72,7 +72,7 @@ import type { PolicyStorePaths } from './policy-store.ts'
 import type { GuardPrefs, ModelReviewPrefs, ReviewPromptTemplate } from './config.ts'
 import { BASELINE_REVIEW_TEMPLATES } from './audit-prompts.ts'
 import { canonicalHook, POLICY_HOOKS } from './hooks.ts'
-import { clearVerdictLog, readVerdictLog } from './audit.ts'
+import { clearVerdictLog, readVerdictLog, sessionEventsOf } from './audit.ts'
 import type { StoredVerdict } from './audit.ts'
 
 /** Structural mirror of the webServer `register` route (host-webserver WebRoute). */
@@ -380,7 +380,7 @@ interface SessionContext {
 }
 
 /** Build the call/result/prompt/approval correlation maps of one session's event log. */
-function buildSessionContext(events: readonly unknown[]): SessionContext {
+function buildSessionContext(events: readonly unknown[] | undefined): SessionContext {
   const calls = new Map<string, { name?: unknown; arguments?: unknown; turn?: unknown; step?: unknown }>()
   const results = new Map<string, string>()
   const stepPrompts = new Map<string, string>()
@@ -390,6 +390,10 @@ function buildSessionContext(events: readonly unknown[]): SessionContext {
   // resolved outcome attaches to the verdict row below.
   const approvalCallIds = new Map<string, string>()
   const approvalByCallId = new Map<string, string>()
+  // A session face whose event log is not (yet) materialized yields an empty
+  // correlation context instead of throwing `events is not iterable` into the
+  // review route (the web server may observe a session before its log lands).
+  if (!Array.isArray(events)) return { calls, results, stepPrompts, approvalByCallId }
   let curTurn: unknown
   let curStep: unknown
   for (const raw of events) {
@@ -462,14 +466,14 @@ function attachDetail(item: Record<string, unknown>, ctx: SessionContext, row: S
  * the review view. Context detail is bounded (~4 000 chars/row).
  */
 export function foldVerdicts(
-  agents: { list(): Array<{ id: unknown; session: { events: readonly unknown[] } }> },
+  agents: { list(): Array<{ id: unknown; session?: unknown }> },
   verdictClearTime: number,
   storedRows: readonly StoredVerdict[],
   lang: 'zh' | 'en' = 'en',
 ): unknown[] {
   const bySession = new Map<string, SessionContext>()
   for (const agent of agents.list()) {
-    bySession.set(String(agent.id), buildSessionContext(agent.session.events))
+    bySession.set(String(agent.id), buildSessionContext(sessionEventsOf(agent?.session)))
   }
   const out: Array<Record<string, unknown>> = []
   for (const rawRow of storedRows) {
@@ -806,7 +810,7 @@ export function registerGuardApi(ctx: Context, deps: GuardApiDeps): (() => void)
           return
         }
         try {
-          const agents = ctx.get('agents') as { list(): Array<{ id: unknown; session: { events: readonly unknown[] } }> } | undefined
+          const agents = ctx.get('agents') as { list(): Array<{ id: unknown; session?: unknown }> } | undefined
           if (!agents) {
             sendJson(res, 200, [])
             return

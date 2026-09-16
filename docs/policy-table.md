@@ -2,6 +2,8 @@
 
 Fully specified policy fields, operators, actions, built-in baseline defenses, and the runtime semantics. Architecture-level details (hook mapping, decision engine, panel lifecycle, file bus) live in [architecture.md](./architecture.md).
 
+Per-rule hit examples across Windows / Linux / macOS, with the risk scenario each rule protects, live in [rule-platform-matrix.md](./rule-platform-matrix.md).
+
 A policy is an ordered entry with an `action` and a `priority`; its `rules` are matched with **OR** semantics (any rule hit triggers the policy). The table is injected via `cordis.yml` under `config.policies`, validated by the schemastery schema before `apply`.
 
 ## Rule fields (`field`)

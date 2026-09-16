@@ -26,11 +26,11 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "bash build.sh",
-    "test": "bash build.sh",
+    "build": "node build.mjs",
+    "test": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "prepare": "bash build.sh --no-test",
-    "prepublishOnly": "bash build.sh"
+    "prepare": "node build.mjs --no-test",
+    "prepublishOnly": "node build.mjs"
   },
   "dsh": {
     "bundle": {
@@ -70,6 +70,7 @@
     "@types/node": "^20.10.0",
     "typescript": "^5.7.0",
     "tsdown": "^0.22.2",
+    "unrun": "^0.3.1",
     "@types/react": "~18.3.1"
   }
 }

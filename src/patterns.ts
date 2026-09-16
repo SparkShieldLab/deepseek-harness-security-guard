@@ -1,135 +1,23 @@
 /**
- * Threat pattern library: plain data (regex lists / token lists) shared by the
- * feature extractors. No logic lives here. Every regex runs against
- * NORMALIZED text (lowercase, invisible chars stripped, whitespace collapsed)
- * or, where noted, the compact variant.
+ * Platform-NEUTRAL threat pattern library: plain data (regex lists / token
+ * lists) shared by the feature extractors and true across shells and OSes —
+ * prompt-injection phrases, control tokens, secret references, encoding
+ * transforms, script extensions, shebangs.
+ *
+ * Platform-VARYING rows (high-risk commands, delete verbs, protected paths,
+ * obfuscation, outbound sinks, privilege escalation, system-path writes,
+ * sandbox escapes, recon, …) live in `threat-catalog.ts` and are selected at
+ * runtime from the host platform. The `*_PATTERNS` aliases at the bottom of
+ * this file re-export the POSIX (Linux) catalogue purely for unit tests and
+ * legacy imports; RUNTIME code must read `activeThreatCatalog()` instead.
+ *
+ * Every regex runs against NORMALIZED text (lowercase, invisible chars
+ * stripped, whitespace collapsed) or, where noted, the compact variant.
  *
  * @module @spark-shield-lab/deepseek-harness-security-guard/patterns
  */
 
-/** High-risk command patterns (normalized text).
- *
- * The `rm` family is expressed in the repeated-flag form
- * (`(?:-[a-z]+\s+)+`) which also covers single-flag invocations
- * (`rm -rf /` == `-rf `), so only the `/*` and top-level-dir variants need
- * dedicated rows. Reverse-shell rows (`nc -e`, `socat … EXEC:`, bash
- * `/dev/tcp` redirection) are high-confidence network code-execution sinks.
- *
- * Whole-text rows only: statement/binary-sensitive terms whose bare word would
- * false-positive on ordinary prose (`grep -r reboot …`, `echo "shutdown the
- * server" >> notes`) live in {@link HIGH_RISK_HEAD_PATTERNS} and are matched
- * at shell-segment heads by the feature extractor. */
-export const HIGH_RISK_PATTERNS: readonly RegExp[] = [
-  /\brm\s+-[a-z]*r[a-z]*f?\s+\/\*/,
-  /\brm\s+(?:-[a-z]+\s+)+\/\s*(\s|$)/,
-  /\brm\s+(?:-[a-z]+\s+)+~\s*(\s|$)/,
-  /\brm\s+(?:-[a-z]+\s+)+\*\s*$/,
-  /\brm\s+[^\n|;&]*--no-preserve-root/,
-  /\brm\s+-[a-z]*r[a-z]*f?\s+\/(home|root|etc|usr|boot|var|bin|opt)\b/,
-  /\|\s*(ba|z|da|k)?sh\b/,
-  /\b(?:nc|ncat|netcat)\b[^\n]*-e\b/,
-  /\bsocat\b[^\n]*\bexec:/,
-  /\b(?:exec|(?:ba|z|da|k)?sh)\b[^\n]*\/dev\/(?:tcp|udp)\b/,
-  // The Windows face of operator_rules 705 REMOTE_INSTALL_CHAIN: PowerShell
-  // download-and-execute cradles (IEX/Invoke-Expression).
-  /\bpowershell\b[^\n]*\b(?:iex|invoke-expression)\b/,
-]
-
-/**
- * High-risk terms that only count at the head of a shell segment (`shutdown`,
- * `sudo reboot`, `mkfs.ext4 /dev/sda`, `format c:`, `while true; …`), never
- * when the same word merely appears in text (`grep -r reboot /etc/systemd`,
- * `echo "shutdown the server" >> notes.md`, `node -e "while(true){}"`).
- * Matched against each normalized segment head by the feature extractor
- * (`sudo`/`env`/`time`/… prefixes are skipped first).
- */
-export const HIGH_RISK_HEAD_PATTERNS: readonly RegExp[] = [
-  /^shutdown\b/,
-  /^reboot\b/,
-  /^systemctl\s+(?:reboot|poweroff)(?:\s|$)/,
-  /^mkfs(?:\.|$)/,
-  /^format\s+[a-z]:/,
-  /^diskutil\s+erase/,
-  /^while\s+(?:true\b|\(1\)|:)/,
-  /^for\s*\(\s*;+\s*\)/,
-]
-
-/** High-risk patterns against the compact variant (defeats letter-spacing).
- *
- * The compact variant is a SINGLE continuous token of alphanumerics (no word
- * boundaries), so these are unanchored substring matches: `sudo r m - r f /`
- * compacts to `sudormrf`, which must still hit. Inputs like `r m - r f /`
- * (→ `rmrf`), plain `rm -rf /` (→ `rmrf`) and `rm -fr /` (→ `rmfr`) are
- * covered by the same rows.
- *
- * Deliberately NOT included: `while`/`for` loop rows. Their letter-spaced
- * forms (`w h i l e  t r u e`) still match the NORMALIZED head-gated rows
- * (whitespace survives normalization), and a compact scan would otherwhise
- * false-positive on embedded busy-loops like `node -e "while(true){}"` (B4#4).
- * Known trade-off (N6): `wh i l e t r u e` fully letter-spaced is a head-gated
- * normalized miss (compact is what breaks letter-spacing, and compact strips
- * nothing here because the segments collapse). Loop-body/exfil features and the
- * command-layer exfiltration chain still catch malicious consumed loops.
- */
-export const HIGH_RISK_COMPACT_PATTERNS: readonly RegExp[] = [
-  /rmrf?/,
-  /rmfr/,
-]
-
-/** Shell rc truncation / persistent backdoor writes.
- * `:> ~/.bashrc` is already caught by the `>>?` row (the `>` sits inside the
- * `:>` token), so only the `truncate` form needs its own row. */
-export const SHELL_RC_TRUNCATION_PATTERNS: readonly RegExp[] = [
-  />>?\s*(?:~\/)?\.(?:bashrc|zshrc|profile|bash_profile|zprofile)\b/,
-  /truncate\s+-s\s+0\s+(?:~\/)?\.(?:bashrc|zshrc|profile)\b/,
-]
-
-/** Command obfuscation / encoded-delivery indicators (normalized text). */
-export const OBFUSCATION_PATTERNS: readonly RegExp[] = [
-  /\bbase64\s+(-d|--decode)\b[^\n|]*\|/,
-  /\bxxd\s+-r\b/,
-  /\bopenssl\s+enc\s+-d\b/,
-  /\bprintf\s+['"][^'"]*\\x[0-9a-f]{2}/,
-  /\bsh\s+-c\s+['"][^'"]*\\x[0-9a-f]{2}/,
-  /\becho\s+['"][^'"]*\\x[0-9a-f]{2}/,
-  /\bcertutil\s+-decode\b/,
-  /\b(bash|sh)\s+(?:-c\s+)?['"]?\s*(?:echo|printf)\b[^|]*\|\s*(?:ba|z|da|k)?sh\b/,
-]
-
-/** Protected path tokens; matched against any path candidate. */
-export const PROTECTED_PATH_TOKENS: readonly string[] = [
-  '.ssh', '.gnupg', '.npmrc', '.netrc', '.dsh', 'cordis.yml', 'cordis.patch.yml',
-  '/etc/sudoers', '/etc/passwd', '/etc/shadow', '.aws/credentials',
-]
-
-/** Home-level shell rc tokens; only matched for absolute / ~ / $-prefixed candidates. */
-export const HOME_RC_TOKENS: readonly string[] = [
-  '.bashrc', '.zshrc', '.profile', '.bash_profile', '.zprofile', '.bash_login',
-]
-
-/** Whole-token delete verbs (normalized). */
-export const DELETE_VERBS: readonly string[] = [
-  'rm', 'rmdir', 'unlink', 'shred', 'truncate', 'wipe', 'erase', 'del', 'deltree', 'rd',
-]
-
-/** `find <start> … -delete` deletion form. */
-export const FIND_DELETE_RE = /\bfind\b[^\n]*\s-delete\b/
-
-/** Outbound network sinks.
- *
- * Simple verbs require a trailing boundary (`(?=[\s;|&()]|$)`) so path
- * tokens like `~/.ssh/id_rsa`, `ssh-notes.txt` or `ping.txt` are not
- * misread as network commands. `/dev/tcp|udp` is a bash-only socket
- * facility with no legitimate non-network use, so any reference counts.
- * `echo`/`printf` first-token exemption lives in features.ts. */
-export const OUTBOUND_PATTERNS: readonly RegExp[] = [
-  /\b(?:curl|wget|fetch|nc|ncat|netcat|socat|telnet|ping|ssh|scp|rsync)\b(?=[\s;|&()]|$)/,
-  /\bgit\s+(?:push|clone|fetch|pull)\b/,
-  /\bpython\S*\s+[^\n]*(?:requests|urllib|socket|smtplib|http\.client)\b/,
-  /\bnode\s+[^\n]*(?:http|https|net|dgram|axios|fetch)\b/,
-  /\binvoke-(webrequest|restmethod|expression)\b/,
-  /\/dev\/(?:tcp|udp)\b/,
-]
+import { buildThreatCatalog } from './threat-catalog.ts'
 
 /** Secret references inside commands (normalized text). */
 export const SECRET_REF_PATTERNS: readonly RegExp[] = [
@@ -139,7 +27,9 @@ export const SECRET_REF_PATTERNS: readonly RegExp[] = [
   /github_pat_|ghp_|gho_|glpat-|sk-|AKIA[0-9A-Z]{16}/,
 ]
 
-/** Encoding-transform indicators (source→transform legs of an exfil chain). */
+/** Encoding-transform indicators (source→transform legs of an exfil chain).
+ * Includes the Windows faces (`Convert.ToBase64String`, `certutil -encode`);
+ * harmless where those tools do not exist. */
 export const TRANSFORM_PATTERNS: readonly RegExp[] = [
   /\bbase64\b/,
   /\bxxd\b/,
@@ -150,6 +40,8 @@ export const TRANSFORM_PATTERNS: readonly RegExp[] = [
   /\bgzip\b/,
   /\b7z\b/,
   /\buuencode\b/,
+  /\bconvert\.tobase64string\b/,
+  /\bcertutil\s+-encode\b/,
 ]
 
 /** Tool-result control tokens stripped before scanning (until stable). */
@@ -161,6 +53,8 @@ export const SPECIAL_TOKENS: readonly string[] = [
 /** Script file extensions for artifact provenance. */
 export const SCRIPT_EXTENSIONS: readonly string[] = [
   '.sh', '.bash', '.zsh', '.py', '.rb', '.pl', '.ps1', '.js', '.ts', '.lua',
+  // Windows + macOS script forms (artifact provenance on those platforms).
+  '.bat', '.cmd', '.vbs', '.hta', '.applescript', '.scpt',
 ]
 
 /** Shebang at content start. */
@@ -257,3 +151,33 @@ export const INJECTION_RULES: readonly { family: string; direct: readonly RegExp
     ],
   },
 ]
+
+// ---------------------------------------------------------------------------
+// POSIX (Linux) catalogue aliases — TEST/LEGACY ONLY.
+//
+// Runtime feature extraction reads `activeThreatCatalog()`. These aliases
+// expose the Linux rows under their historical names so existing unit tests
+// keep asserting POSIX behavior without coupling to the platform selector.
+// ---------------------------------------------------------------------------
+const LINUX = buildThreatCatalog('linux')
+
+/** @deprecated runtime reads `activeThreatCatalog().highRisk`. */
+export const HIGH_RISK_PATTERNS = LINUX.highRisk
+/** @deprecated runtime reads `activeThreatCatalog().highRiskHead`. */
+export const HIGH_RISK_HEAD_PATTERNS = LINUX.highRiskHead
+/** @deprecated runtime reads `activeThreatCatalog().highRiskCompact`. */
+export const HIGH_RISK_COMPACT_PATTERNS = LINUX.highRiskCompact
+/** @deprecated runtime reads `activeThreatCatalog().shellRcTruncation`. */
+export const SHELL_RC_TRUNCATION_PATTERNS = LINUX.shellRcTruncation
+/** @deprecated runtime reads `activeThreatCatalog().obfuscation`. */
+export const OBFUSCATION_PATTERNS = LINUX.obfuscation
+/** @deprecated runtime reads `activeThreatCatalog().protectedPathTokens`. */
+export const PROTECTED_PATH_TOKENS = LINUX.protectedPathTokens
+/** @deprecated runtime reads `activeThreatCatalog().homeRcTokens`. */
+export const HOME_RC_TOKENS = LINUX.homeRcTokens
+/** @deprecated runtime reads `activeThreatCatalog().deleteVerbs`. */
+export const DELETE_VERBS = LINUX.deleteVerbs
+/** @deprecated runtime reads `activeThreatCatalog().findDelete`. */
+export const FIND_DELETE_RE = LINUX.findDelete
+/** @deprecated runtime reads `activeThreatCatalog().outbound`. */
+export const OUTBOUND_PATTERNS = LINUX.outbound

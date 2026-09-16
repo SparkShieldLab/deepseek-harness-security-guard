@@ -35,19 +35,34 @@
 
 **前置条件**：DSH 可正常启动（`dsh web`），Node.js ≥ 22，npm。
 
-包尚未发布到 npm，先走源码安装：
+包尚未发布到 npm，先走源码安装。
 
-```text
-1. git clone <本仓库> && cd deepseek-harness-security-guard
-2. npm install
-3. ./build.sh --no-test
-4. dsh plugin --profile web add "link:$(pwd)"
-5. 重启 dsh web 并刷新浏览器
+**Linux / macOS**
+
+```bash
+git clone <本仓库> && cd deepseek-harness-security-guard
+npm install
+./build.sh --no-test
+dsh plugin --profile web add "link:$(pwd)"
 ```
 
-存在本地 `dsh` 安装时，`build.sh` 通过生成的 tsconfig `paths` 覆盖，将 `@deepseek-ai/*` 的类型解析指向 dsh 安装的 `node_modules` 做版本对齐（保证类型检查与运行中的 harness API 一致）；仅影响类型检查，**不会写入 `node_modules`**，因此反复 `npm install` 是安全的。没有本机 `dsh` 时回退到 `package.json` 声明的 registry 依赖，见 `build.sh`。
+**Windows**
 
-更新：`git pull && ./build.sh`，然后重启。
+```bat
+git clone <本仓库>
+cd deepseek-harness-security-guard
+npm install
+build.bat --no-test
+dsh plugin --profile web add "link:%CD%"
+```
+
+然后重启 `dsh web` 并刷新浏览器。
+
+npm 生命周期脚本统一走 `build.mjs`，按操作系统自动选择对应脚本，因此各平台直接 `npm install` 均可。若 `dsh` 不是 npm 方式安装，可用（Windows）`set DSH_NODE_MODULES=C:\path\to\dsh\node_modules` 手动指定对齐目录。
+
+存在本地 `dsh` 安装时，`build.sh` / `build.bat` 通过生成的 tsconfig `paths` 覆盖，将 `@deepseek-ai/*` 的类型解析指向 dsh 安装的 `node_modules` 做版本对齐（保证类型检查与运行中的 harness API 一致）；仅影响类型检查，**不会写入 `node_modules`**，因此反复 `npm install` 是安全的。没有本机 `dsh` 时回退到 `package.json` 声明的 registry 依赖，见 `build.sh`。
+
+更新：`git pull` 后执行 `./build.sh`（Windows：`build.bat`），然后重启。
 
 卸载：`dsh plugin --profile web remove @spark-shield-lab/deepseek-harness-security-guard`
 
@@ -72,7 +87,7 @@
 
 ## 模型审查
 
-规则引擎之后的可选第二审查阶段（默认关闭，在盾牌面板设置里开启）。被守护的步骤会渲染一条或多条审查提示词发给模型，返回的结构化判决与规则判决按“就严合并”（`block` > `ask` > `warn` > `allow`）。规则层已判 `block` 时直接短路，不再发起模型调用——干净通过零成本。
+规则引擎之后的可选第二审查阶段（默认关闭，在 **Security Guard** 设置分区开启，见下文 [设置](#设置)）。被守护的步骤会渲染一条或多条审查提示词发给模型，返回的结构化判决与规则判决按“就严合并”（`block` > `ask` > `warn` > `allow`）。规则层已判 `block` 时直接短路，不再发起模型调用——干净通过零成本。
 
 - **模板**：内置三张基线模板卡片（`agent/pre-step` 恶意意图检测；`tools/pre-execute` 风险指令检测 + 意图偏离检测）；自定义模板是可编辑的提示词卡片，可绑定一个或多个 hook，在基线链之后执行。多模板判决就严合并，出现 `block` 即短路剩余模板。
 - **session 模式**：通过 harness `llm` 服务复用 agent 当前模型，零额外配置。**custom 模式**：调用专用端点，协议可选 `openai-chat`（默认）、`openai-responses`、`anthropic`，支持推理链档位（`off` / `low` / `medium` / `high`），默认 12 秒截止时间约束额外延迟。
@@ -80,6 +95,14 @@
 - **失败即放行（fail-open）**：模型审查失败或输出不可解析时回退到规则判决，反之则不然。
 - **观测模式不破防**：`mode: monitor`（引擎级或单策略级）下，模型判决无法把已降级的 `warn` 再升级为拒绝——合并判决封顶在 `warn` 并标注降级。
 - **全程可观测**：每次调用——请求体、响应体、耗时、错误——都作为独立行持久化在判决日志中，展示在面板的“模型审查” tab。
+
+## 设置
+
+DSH Settings 壳里的 **Security Guard** 分区集中管理全局开关。所有修改即时持久化并生效——无需重启，无需改 `cordis.yml`。三个可折叠分组：
+
+- **审查链**——守卫链为「hook → 规则 → 模型 → 判决」。防护总开关（`guardEnabled`，关闭即完全禁用：不拦截、不审批、不记日志）、规则阶段（`rulesEnabled`，关闭后规则引擎全部放行，模型阶段仍可独立运行）与模型阶段（`modelReview`）可各自独立开关。模型分组还承载其全部配置：审查模型来源（复用会话模型，或专用端点：协议 / Base URL / API Key / 模型名）、session 模式下的补审、custom 模式下的推理链档位，以及约束额外延迟的调用截止时间。
+- **界面与语言**——面板语言（`auto` 跟随 DSH 当前界面语言；`zh` / `en` 强制指定，block/ask 理由与审查模型的 reason 行随之切换）、会话内 Security Review tab（`showSessionTab`）与会话头部盾牌按钮（`showHeaderButton`）。
+- **调试**——把 `allow` 判决也记入审计日志（`recordAllow`，默认关闭以保持日志精简）。
 
 <p align="center">
   <img src="docs/assets/settings.gif" alt="Security Guard 设置分区：防护开关、规则审查与模型审查开关、审查模型来源、补审、语言与显示选项" width="80%" />

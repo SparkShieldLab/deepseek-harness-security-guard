@@ -35,25 +35,43 @@ A local, rule-based security guard for DeepSeek Harness agents. It hooks agent t
 
 **Prerequisites:** a bootable DSH (`dsh web`), Node.js ≥ 22, npm.
 
-Until the package is published, install from source:
+Until the package is published, install from source.
 
-```text
-1. git clone <this repo> && cd deepseek-harness-security-guard
-2. npm install
-3. ./build.sh --no-test
-4. dsh plugin --profile web add "link:$(pwd)"
-5. Restart dsh web and refresh the browser
+**Linux / macOS**
+
+```bash
+git clone <this repo> && cd deepseek-harness-security-guard
+npm install
+./build.sh --no-test
+dsh plugin --profile web add "link:$(pwd)"
 ```
 
-`build.sh` aligns the compile against the *running* `dsh` installation when one
-is available (so the type-check matches the harness runtime APIs). The
-alignment is type-check-only — a generated tsconfig `paths` override resolves
-`@deepseek-ai/*` types from the dsh install's `node_modules`; your
-`node_modules` is never touched, so plain `npm install` stays safe. Without a
-local `dsh` it builds against the registry-pinned dependencies declared in
+**Windows**
+
+```bat
+git clone <this repo>
+cd deepseek-harness-security-guard
+npm install
+build.bat --no-test
+dsh plugin --profile web add "link:%CD%"
+```
+
+Then restart `dsh web` and refresh the browser.
+
+The npm lifecycle scripts go through `build.mjs`, which picks the right build
+script per OS, so a plain `npm install` works everywhere. If `dsh` is installed
+but not via npm, point the build at its packages with
+`set DSH_NODE_MODULES=C:\path\to\dsh\node_modules` (Windows).
+
+`build.sh` / `build.bat` align the compile against the *running* `dsh`
+installation when one is available (so the type-check matches the harness
+runtime APIs). The alignment is type-check-only — a generated tsconfig `paths`
+override resolves `@deepseek-ai/*` types from the dsh install's `node_modules`;
+your `node_modules` is never touched, so plain `npm install` stays safe. Without
+a local `dsh` it builds against the registry-pinned dependencies declared in
 `package.json`; see `build.sh`.
 
-To update: `git pull && ./build.sh`, then restart.
+To update: `git pull` then `./build.sh` (Windows: `build.bat`), then restart.
 
 To remove: `dsh plugin --profile web remove @spark-shield-lab/deepseek-harness-security-guard`
 
@@ -78,7 +96,7 @@ The full reference (rule fields, operators (`eq` / `neq` / `contains` / `in` / `
 
 ## Model Review
 
-An optional second review stage behind the rule engine (off by default; enable it in the shield panel's settings). Guarded steps render one or more review prompts and send them to a model; the returned structured verdict merges with the rule verdict strictest-wins (`block` > `ask` > `warn` > `allow`). A rule-level `block` short-circuits the model call entirely, so a clean pass costs nothing.
+An optional second review stage behind the rule engine (off by default; enable it in the **Security Guard** settings section — see [Settings](#settings) below). Guarded steps render one or more review prompts and send them to a model; the returned structured verdict merges with the rule verdict strictest-wins (`block` > `ask` > `warn` > `allow`). A rule-level `block` short-circuits the model call entirely, so a clean pass costs nothing.
 
 - **Templates.** Three baseline templates ship enabled-by-default cards (malicious-intent detection on `agent/pre-step`; risky-instruction and intent-drift detection on `tools/pre-execute`); custom templates are editable prompt cards bound to one or more hooks, executed after the baseline chain. Verdicts across templates merge strictest-wins, and a `block` short-circuits the rest.
 - **Session mode** reuses the agent's current model through the harness `llm` service — no extra configuration. **Custom mode** calls a dedicated endpoint using the `openai-chat` (default), `openai-responses` or `anthropic` wire protocol, with an optional reasoning-chain level (`off` / `low` / `medium` / `high`) and a default 12 s deadline that bounds the added latency.
@@ -86,6 +104,14 @@ An optional second review stage behind the rule engine (off by default; enable i
 - **Fail-open.** A failed or unparseable model review falls back to the rule verdict, never the other way around.
 - **Monitor mode holds.** With `mode: monitor` (engine-level or per-policy), a model escalation cannot re-create a deny: the merged verdict is capped at `warn` and annotated as downgraded.
 - **Observability.** Every attempt — request body, response body, duration, errors — is persisted as a dedicated row in the verdict log and shown on the panel's Model Review tab.
+
+## Settings
+
+A **Security Guard** section in the DSH Settings shell owns the global switches. Every change is persisted and applied live — no restart, no `cordis.yml` editing. Three collapsible groups:
+
+- **Review chain** — the guard chain is `hook → rules → model → verdict`. The protection master switch (`guardEnabled`; off = fully disabled, no blocking or logging), the rule stage (`rulesEnabled`; off = the rule engine allows everything while the model stage can still run on its own) and the model stage (`modelReview`) are independently switchable. The model group also carries its full configuration: review model source (reuse the session model, or a dedicated endpoint with protocol / base URL / API key / model), make-up reviews in session mode, the reasoning-chain level in custom mode, and the call deadline that bounds the added latency.
+- **Interface & language** — panel language (`auto` follows the active DSH locale; `zh` / `en` force one, and block/ask reasons and the review model's reason line follow it), the conversation Security Review tab (`showSessionTab`) and the session-header shield button (`showHeaderButton`).
+- **Debug** — record `allow` verdicts in the audit log (`recordAllow`; off by default to keep the log small).
 
 <p align="center">
   <img src="docs/assets/settings.gif" alt="The Security Guard settings section: protection, rule review and model review switches, review model source, make-up reviews, language and display options" width="80%" />
