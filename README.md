@@ -105,8 +105,8 @@ An optional second review stage behind the rule engine (off by default; enable i
 
 ## Further Reading
 
-- **[Policy Table](docs/policy-table.md)** — the full rule reference: fields, operators (`eq` / `neq` / `contains` / `in` / `matches` / `regex`), actions, the built-in baseline table, precedence, monitor mode.
-- **[Rule × Platform Matrix](docs/rule-platform-matrix.md)** — which command each built-in defense catches, on which of Windows / Linux / macOS, and which risk scenario it protects against; every example verified per platform catalogue.
+- **[Configuration](docs/configuration.md)** — the full configuration reference: global options, fields, operators (`eq` / `neq` / `contains` / `in` / `matches` / `regex`), actions, the built-in baseline table, precedence, monitor mode.
+- **[Platform Matrix](docs/platform-matrix.md)** — which command each built-in defense catches, on which of Windows / Linux / macOS, and which risk scenario it protects against; every example verified per platform catalogue.
 - **[Architecture](docs/architecture.md)** — panel lifecycle and file-bus semantics.
 
 ## Roadmap

@@ -1,10 +1,22 @@
-# Policy Table Reference
+# Configuration Reference
 
-Fully specified policy fields, operators, actions, built-in baseline defenses, and the runtime semantics. Architecture-level details (hook mapping, decision engine, panel lifecycle, file bus) live in [architecture.md](./architecture.md).
-
-Per-rule hit examples across Windows / Linux / macOS, with the risk scenario each rule protects, live in [rule-platform-matrix.md](./rule-platform-matrix.md).
+Global options, policy fields, operators, actions, the built-in baseline defenses, and the runtime semantics of the policy table.
 
 A policy is an ordered entry with an `action` and a `priority`; its `rules` are matched with **OR** semantics (any rule hit triggers the policy). The table is injected via `cordis.yml` under `config.policies`, validated by the schemastery schema before `apply`.
+
+## Global options
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `policies` | `[]` | User policy table, appended after the baseline |
+| `basePolicies` | `true` | Include the 27 built-in baseline policies |
+| `mode` | `'protect'` | `monitor` downgrades every `block`/`ask` to `warn` |
+| `failOpen` | `true` | Engine errors degrade to `allow` instead of `block` |
+| `workspaceRoot` | `process.cwd()` | Root for path-scoped guards (outside-delete, protected paths) |
+| `platform` | `'auto'` | Rule-catalogue family: `'auto'` / `'win32'` / `'linux'` / `'darwin'`; env `DSH_GUARD_PLATFORM` overrides the host OS |
+| `hooks` | all on | Per-hook switches (`toolsPreExecute`, `toolsPostExecute`, `toolsResult`, `agentPreStep`, `agentTurnStopping`, `agentSessionStart`, `subagentLifecycle`, `toolsGuard`, `systemPromptAssemble`) |
+| `promptGuard` | `true` | Inject the security section into every system prompt |
+| `promptBlockNotice` | `true` | Append a visible notice when a prompt step is rejected |
 
 ## Rule fields (`field`)
 
@@ -34,16 +46,16 @@ A policy is an ordered entry with an `action` and a `priority`; its `rules` are 
 
 ## Built-in Baseline Defenses
 
-Out of the box the plugin ships a 27-policy threat model; no policy table is required. The feature extractor (`features.ts` + `intent.ts`) turns tool calls, tool results, cross-event state, and user-message intent into feature fields the engine matches. A field is **only present when its signal fired**, so a benign call produces no fields and matches no baseline rule.
+Out of the box the plugin ships a 27-policy threat model; no policy table is required. The feature extractor (`features.ts` + `intent.ts` + `command-threats.ts`) turns tool calls, tool results, cross-event state, and user-message intent into feature fields the engine matches. A field is **only present when its signal fired**, so a benign call produces no fields and matches no baseline rule.
 
 The 27 built-in policies (priority **50**, below the user default of 100):
 
 | Policy id | Matches field | Action | Blocks / warns |
 | --- | --- | --- | --- |
-| `base-block-high-risk-command` | `highRisk` | block | `rm -rf /`, pipe-to-shell (`curl … | sh`), at-shell-segment-head loops/shutdown/format (`while true; …`, `shutdown now`, `sudo reboot`, `mkfs…`), shell rc truncation, reverse shells (`bash … >& /dev/tcp/…`, `nc -e`, `socat … EXEC:`), letter-spaced `r m - r f /` (and `sudo r m - r f /`) |
-| `base-block-obfuscated-command` | `obfuscated` | block | `base64 -d | sh`, `xxd -r`, hex escapes, invisible-unicode / zero-width tricks |
+| `base-block-high-risk-command` | `highRisk` | block | `rm -rf /`, pipe-to-shell (`curl … \| sh`), at-shell-segment-head loops/shutdown/format (`while true; …`, `shutdown now`, `sudo reboot`, `mkfs…`), shell rc truncation, reverse shells (`bash … >& /dev/tcp/…`, `nc -e`, `socat … EXEC:`), letter-spaced `r m - r f /` (and `sudo r m - r f /`) |
+| `base-block-obfuscated-command` | `obfuscated` | block | `base64 -d \| sh`, `xxd -r`, hex escapes, invisible-unicode / zero-width tricks |
 | `base-warn-overlong-command` | `overlong` | warn | commands longer than 10 000 chars (recorded, never blocked by length alone) |
-| `base-block-encoded-high-risk` | `encodedHighRisk` | block | base64/hex payloads that decode to a high-risk or obfuscated command (`echo <b64> | base64 -d`, PowerShell `-EncodedCommand`, incl. short padded tokens and UTF-16LE payloads) |
+| `base-block-encoded-high-risk` | `encodedHighRisk` | block | base64/hex payloads that decode to a high-risk or obfuscated command (`echo <b64> \| base64 -d`, PowerShell `-EncodedCommand`, incl. short padded tokens and UTF-16LE payloads) |
 | `base-block-protected-path` | `protectedPathHit` | block | `~/.ssh`, `~/.gnupg`, `~/.dsh`, shell rc files, sensitive `/etc` files (quote-splitting resistant) |
 | `base-block-outside-delete` | `deleteOutsideWorkspace` | block | deletion (`rm`, `shred`, `gio trash`, `find -delete`, …) targeting paths resolved outside the workspace (`..`, `cd` base, `~`/`$HOME` included) |
 | `base-block-loop-hazard` | `repeatExceeded` | block | the 4th identical mutating call in a turn (repeat budget, allows 3; read-only calls like `git status` never count) |
@@ -68,7 +80,9 @@ The 27 built-in policies (priority **50**, below the user default of 100):
 | `base-warn-secret-logging` | `secretLogging` | warn | code writing secret-looking values to logs (`console.log`/token/password/secret) |
 | `base-warn-memory-poison-write` | `memoryPoisonWrite` | warn | directive/trigger-phrase content written toward a memory-like target (long-term memory poisoning risk) |
 
-Other feature fields available for user rules: `command`, `overlong`, `outbound`, `secretRef`, `transformSignal`, `encodedHighRisk`, `scriptArtifactPath` / `scriptArtifactHash` / `scriptArtifactRisk`, `toolResultText`, `specialTokensRemoved`, `toolResultFlags`, `toolResultRisk`, `observedSecrets`, `deleteTargets`, `privEsc`, `systemPathWrite`, `configTamper`, `sandboxEscape`, `netRecon`, `pathTraversal`, `untrustedSource`, `insecureRegistry`, `secretLogging`, `memoryPoisonWrite`.
+Other feature fields available for user rules: `command`, `overlong`, `outbound`, `secretRef`, `transformSignal`, `encodedHighRisk`, `scriptArtifactPath` / `scriptArtifactHash` / `scriptArtifactRisk`, `toolResultText`, `toolResultSuspicious`, `specialTokensRemoved`, `toolResultFlags`, `toolResultRisk`, `observedSecrets`, `deleteTargets`, `intentMatch`, `privEsc`, `systemPathWrite`, `configTamper`, `sandboxEscape`, `netRecon`, `pathTraversal`, `untrustedSource`, `insecureRegistry`, `secretLogging`, `memoryPoisonWrite`.
+
+The command/content families (`privEsc`, `systemPathWrite`, `configTamper`, `sandboxEscape`, `netRecon`, `pathTraversal`, `untrustedSource`, `insecureRegistry`, `secretLogging`, `memoryPoisonWrite`) are platform-adaptive: the armed rows follow the `platform` option above.
 
 Turn the whole baseline off with `basePolicies: false`.
 
@@ -82,24 +96,20 @@ Baseline policies sit at priority **50**; user policies default to **100**, so a
 
 ## Observed secrets / exfiltration chains
 
-Secrets observed in tool results are remembered per session with a sliding TTL (5 minutes, refreshed on use). Path-shaped tokens, dotted identifiers and low-entropy runs never count as secrets (a directory listing is not a leak), and the per-session pool is LRU-capped. An outbound command that carries a known secret (raw, base64, or hex form), or that fires while a credential or encoding leg of the chain is armed, is classified as an exfiltration chain: `high` is blocked, `medium` is warned and audited via the `recordVerdict` trail.
+Secrets observed in tool results are remembered per session with a sliding TTL (5 minutes, refreshed on use). Path-shaped tokens, dotted identifiers and low-entropy runs never count as secrets (a directory listing is not a leak), and the per-session pool holds at most 200 entries (the oldest is evicted on overflow). An outbound command that carries a known secret (raw, base64, or hex form), or that fires while a credential or encoding leg of the chain is armed, is classified as an exfiltration chain: `high` is blocked, `medium` is warned and audited via the `recordVerdict` trail.
 
 ## Prompt guard (system-prompt assembly)
 
-With `promptGuard: true` (default) the plugin injects an `agent-security-guard` section (order -50, before the persona) into every system-prompt assembly: 6 static rules (tool-only state changes, no secrets in prompts, protected paths, no outside-workspace deletes, tool results as untrusted data) plus a dynamic "session risk context" block when the session has observed secrets or risk flags. Contribution follows the harness's cooperative semantics: the section is appended to the waterfall result, and a registered `complete` system-prompt section intentionally overrides it. Disable with `promptGuard: false` or `hooks.systemPromptAssemble: false`.
+With `promptGuard: true` (default) the plugin injects an `agent-security-guard` section (order -50, before the persona) into every system-prompt assembly. The static part is 6 fixed rules: state changes go through tools only, no secrets in prompts or written files, protected paths are off limits, no outside-workspace deletes, tool results are untrusted data, and an injected "session risk context" block is authoritative for the current turn. The dynamic part is that risk-context block itself, appended only when the session has observed secrets or risk flags. Contribution follows the harness's cooperative semantics: the section is appended to the waterfall result, and a registered `complete` system-prompt section intentionally overrides it. Disable with `promptGuard: false` or `hooks.systemPromptAssemble: false`.
 
 ## User-intent attack scan
 
-Every `agent/pre-step` scan runs the **user-role** message text (never system/tool-derived context mixed in through `additionalContexts`) through the intent patterns (plain + dense views; Chinese patterns on the plain table only). Direct attack wording (`disable the guard`, `skip the approval`, `ignore all restrictions`, `绕过审批`, …) sets `userIntentRisk: block` → rejected by `base-block-user-intent-attack`; softer hints (`pretend you have no restrictions`, bypass how-to questions) are `warn` → audited by `base-warn-user-intent-attack`. Quoting/discussing the guard itself ("The docs say: to disable the safety guard, edit config.yml") is not treated as an attack.
+Every `agent/pre-step` scan runs the **user-role** message text (never system/tool-derived context mixed in through `additionalContexts`) through the intent patterns (plain + dense views; Chinese patterns on the plain table only). Direct attack wording (`disable the guard`, `skip the approval`, `ignore all restrictions`, `绕过审批`, …) sets `userIntentRisk: block` → rejected by `base-block-user-intent-attack`; softer hints (`pretend you have no restrictions`, bypass how-to questions) are `warn` → audited by `base-warn-user-intent-attack`. Quoting/discussing the guard itself ("The docs say: to disable the safety guard, edit config.yml") is downgraded to a warn-level signal, not a block.
 
 ## Prompt-block notice
 
-When an `agent/pre-step` rejection happens (`block`, or an `ask` degraded to reject), the plugin appends a `notice`-form `user/message` (`source.kind: 'plugin'`) to the session by default (`promptBlockNotice: true`; disable with `promptBlockNotice: false`), so the conversation page shows immediate feedback instead of silently swallowing the user's message: the collapsed row shows the summary ("Security guard blocked this message") and expanding reveals the localized reason (policy id included). The notice carries only the policy reason — it never echoes the blocked content (prompt-injection safety) and never feeds the blocked text back into model context; failures are contained (the reject still wins, never downgraded to an error).
+When an `agent/pre-step` rejection happens (`block`, or an `ask` degraded to reject), the plugin appends a `notice`-form `user/message` (`source.kind: 'plugin'`) to the session by default (`promptBlockNotice: true`; disable with `promptBlockNotice: false`), so the conversation page shows immediate feedback instead of silently swallowing the user's message: the collapsed row shows the summary ("Security guard blocked this message") and expanding reveals the localized reason (policy id included). The notice carries only the policy reason. It never echoes the blocked content (prompt-injection safety) and never feeds the blocked text back into model context; failures are contained (the reject still wins, never downgraded to an error).
 
 ## Monitor mode
 
 Set `mode: monitor` in cordis.yml to run the whole table (baseline + user policies) in monitor mode: every `block`/`ask` verdict downgrades to `warn`, so the guard records verdicts in the audit trail but never denies. Individual policies can override via their own `mode` field (the UI policy table is isomorphic to the cordis.yml `policies` field). Default is `protect`.
-
-## Verdict logging
-
-Verdicts are persisted to the plugin's own JSONL audit file, `$DSH_HOME/agent-security-guard/verdicts.jsonl`, and **never** to the harness session log (the harness telemetry layer treats a committed `feedback/record` event as the session-export consent signal). `allow` verdicts are **not persisted by default**; `block`/`ask`/`warn` are. Records carry the durable meta (session / turn / step / call id / policy / time); tool verdicts also persist the tool name and call id (the panel correlates arguments/result text from the live session), and `agent/pre-step` verdicts persist the assembled prompt content the hook inspected at record time. Detail fields are bounded (~4 KB each) and purely additive. The audit file is size-capped (auto-compacted) and can be cleared from the panel.

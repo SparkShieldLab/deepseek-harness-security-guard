@@ -105,8 +105,8 @@ DSH Settings 壳里的 **Security Guard** 分区集中管理全局开关。所�
 
 ## 延伸阅读
 
-- **[策略表参考](docs/policy-table.zh-CN.md)**——规则完整参考：字段、算子（`eq` / `neq` / `contains` / `in` / `matches` / `regex`）、动作、内置基线表、优先级、观测模式。
-- **[规则 × 平台命中矩阵](docs/rule-platform-matrix.zh-CN.md)**——每条内置防线在 Windows / Linux / macOS 上分别命中什么命令、防护什么风险场景，用例均按平台目录实测。
+- **[配置参考](docs/configuration.zh-CN.md)**——配置完整参考：全局配置、字段、算子（`eq` / `neq` / `contains` / `in` / `matches` / `regex`）、动作、内置基线表、优先级、观测模式。
+- **[平台命中矩阵](docs/platform-matrix.zh-CN.md)**——每条内置防线在 Windows / Linux / macOS 上分别命中什么命令、防护什么风险场景，用例均按平台目录实测。
 - **[架构说明](docs/architecture.zh-CN.md)**——面板生命周期与文件总线语义。
 
 ## 后续计划
