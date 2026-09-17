@@ -35,12 +35,19 @@ A local, rule-based security guard for DeepSeek Harness agents. It hooks agent t
 
 **Prerequisites:** a bootable DSH (`dsh web`), Node.js ≥ 22, npm.
 
-Until the package is published, install from source.
+```bash
+# install pnpm
+npm install -g pnpm
+
+# install the DSH CLI
+npm install -g @deepseek-ai/dsh
+```
 
 **Linux / macOS**
 
 ```bash
-git clone <this repo> && cd deepseek-harness-security-guard
+git clone <this repo>
+cd deepseek-harness-security-guard
 npm install
 ./build.sh --no-test
 dsh plugin --profile web add "link:$(pwd)"
@@ -58,24 +65,9 @@ dsh plugin --profile web add "link:%CD%"
 
 Then restart `dsh web` and refresh the browser.
 
-The npm lifecycle scripts go through `build.mjs`, which picks the right build
-script per OS, so a plain `npm install` works everywhere. If `dsh` is installed
-but not via npm, point the build at its packages with
-`set DSH_NODE_MODULES=C:\path\to\dsh\node_modules` (Windows).
-
-`build.sh` / `build.bat` align the compile against the *running* `dsh`
-installation when one is available (so the type-check matches the harness
-runtime APIs). The alignment is type-check-only — a generated tsconfig `paths`
-override resolves `@deepseek-ai/*` types from the dsh install's `node_modules`;
-your `node_modules` is never touched, so plain `npm install` stays safe. Without
-a local `dsh` it builds against the registry-pinned dependencies declared in
-`package.json`; see `build.sh`.
-
 To update: `git pull` then `./build.sh` (Windows: `build.bat`), then restart.
 
 To remove: `dsh plugin --profile web remove @spark-shield-lab/deepseek-harness-security-guard`
-
-The package ships its bundle patch (`cordis.patch.yml`), so the plugin mounts itself without manual wiring in `cordis.patch.yml`. It starts with a demo policy table (curl requires approval; prompts containing a private key are rejected); replace the `policies` with your own rule set as needed.
 
 ## Control Panel
 
@@ -87,23 +79,6 @@ The **Security Guard Review** panel opens from the shield button on a session he
 <p align="center">
   <img src="docs/assets/rule_demo.gif" alt="Editing a policy live in the Security Guard Review panel: priority, mode, rules and the built-in baseline list" width="80%" />
 </p>
-
-The plugin also registers a **Security Review** tab in the conversation view ring: that session's verdicts as a table, refreshed every 4 s while open (toggled from the "Security Guard" settings section in the DSH Settings shell, `showSessionTab`).
-
-Panel lifecycle and file-bus semantics: [docs/architecture.md](docs/architecture.md).
-
-The full reference (rule fields, operators (`eq` / `neq` / `contains` / `in` / `matches` / `regex`), actions, the built-in baseline table, precedence, monitor mode) is in [docs/policy-table.md](docs/policy-table.md).
-
-## Model Review
-
-An optional second review stage behind the rule engine (off by default; enable it in the **Security Guard** settings section — see [Settings](#settings) below). Guarded steps render one or more review prompts and send them to a model; the returned structured verdict merges with the rule verdict strictest-wins (`block` > `ask` > `warn` > `allow`). A rule-level `block` short-circuits the model call entirely, so a clean pass costs nothing.
-
-- **Templates.** Three baseline templates ship enabled-by-default cards (malicious-intent detection on `agent/pre-step`; risky-instruction and intent-drift detection on `tools/pre-execute`); custom templates are editable prompt cards bound to one or more hooks, executed after the baseline chain. Verdicts across templates merge strictest-wins, and a `block` short-circuits the rest.
-- **Session mode** reuses the agent's current model through the harness `llm` service — no extra configuration. **Custom mode** calls a dedicated endpoint using the `openai-chat` (default), `openai-responses` or `anthropic` wire protocol, with an optional reasoning-chain level (`off` / `low` / `medium` / `high`) and a default 12 s deadline that bounds the added latency.
-- **Make-up review.** Session mode parks steps whose model route was not yet resolvable and reviews them once it shows up (audit-only, flagged as late).
-- **Fail-open.** A failed or unparseable model review falls back to the rule verdict, never the other way around.
-- **Monitor mode holds.** With `mode: monitor` (engine-level or per-policy), a model escalation cannot re-create a deny: the merged verdict is capped at `warn` and annotated as downgraded.
-- **Observability.** Every attempt — request body, response body, duration, errors — is persisted as a dedicated row in the verdict log and shown on the panel's Model Review tab.
 
 ## Settings
 
@@ -117,10 +92,26 @@ A **Security Guard** section in the DSH Settings shell owns the global switches.
   <img src="docs/assets/settings.gif" alt="The Security Guard settings section: protection, rule review and model review switches, review model source, make-up reviews, language and display options" width="80%" />
 </p>
 
+## Model Review
+
+An optional second review stage behind the rule engine (off by default; enable it in the **Security Guard** settings section — see [Settings](#settings) above). Guarded steps render one or more review prompts and send them to a model; the returned structured verdict merges with the rule verdict strictest-wins (`block` > `ask` > `warn` > `allow`). A rule-level `block` short-circuits the model call entirely, so a clean pass costs nothing.
+
+- **Templates.** Three baseline templates ship enabled-by-default cards (malicious-intent detection on `agent/pre-step`; risky-instruction and intent-drift detection on `tools/pre-execute`); custom templates are editable prompt cards bound to one or more hooks, executed after the baseline chain. Verdicts across templates merge strictest-wins, and a `block` short-circuits the rest.
+- **Session mode** reuses the agent's current model through the harness `llm` service — no extra configuration. **Custom mode** calls a dedicated endpoint using the `openai-chat` (default), `openai-responses` or `anthropic` wire protocol, with an optional reasoning-chain level (`off` / `low` / `medium` / `high`) and a default 12 s deadline that bounds the added latency.
+- **Make-up review.** Session mode parks steps whose model route was not yet resolvable and reviews them once it shows up (audit-only, flagged as late).
+- **Fail-open.** A failed or unparseable model review falls back to the rule verdict, never the other way around.
+- **Monitor mode holds.** With `mode: monitor` (engine-level or per-policy), a model escalation cannot re-create a deny: the merged verdict is capped at `warn` and annotated as downgraded.
+- **Observability.** Every attempt — request body, response body, duration, errors — is persisted as a dedicated row in the verdict log and shown on the panel's Model Review tab.
+
+## Further Reading
+
+- **[Policy Table](docs/policy-table.md)** — the full rule reference: fields, operators (`eq` / `neq` / `contains` / `in` / `matches` / `regex`), actions, the built-in baseline table, precedence, monitor mode.
+- **[Rule × Platform Matrix](docs/rule-platform-matrix.md)** — which command each built-in defense catches, on which of Windows / Linux / macOS, and which risk scenario it protects against; every example verified per platform catalogue.
+- **[Architecture](docs/architecture.md)** — panel lifecycle and file-bus semantics.
+
 ## Roadmap
 
 - **Remote policy service.** Call an external policy/risk service for deployment-wide, centrally managed rules beyond the local table.
-- **Expand baseline coverage.** E.g. Windows-specific commands.
 - **Verdict log auditing.** Export the verdict log, persist it to a database, and use it for auditing.
 
 ## Acknowledgments

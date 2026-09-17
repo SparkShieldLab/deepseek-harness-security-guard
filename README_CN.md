@@ -35,13 +35,20 @@
 
 **前置条件**：DSH 可正常启动（`dsh web`），Node.js ≥ 22，npm。
 
-包尚未发布到 npm，先走源码安装。
+```bash
+# 安装 pnpm
+npm install -g pnpm --registry=https://registry.npmmirror.com
+
+# 安装 DSH CLI
+npm install -g @deepseek-ai/dsh --registry=https://registry.npmmirror.com
+```
 
 **Linux / macOS**
 
 ```bash
-git clone <本仓库> && cd deepseek-harness-security-guard
-npm install
+git clone <本仓库>
+cd deepseek-harness-security-guard
+npm install --registry=https://registry.npmmirror.com
 ./build.sh --no-test
 dsh plugin --profile web add "link:$(pwd)"
 ```
@@ -51,22 +58,16 @@ dsh plugin --profile web add "link:$(pwd)"
 ```bat
 git clone <本仓库>
 cd deepseek-harness-security-guard
-npm install
+npm install --registry=https://registry.npmmirror.com
 build.bat --no-test
 dsh plugin --profile web add "link:%CD%"
 ```
 
 然后重启 `dsh web` 并刷新浏览器。
 
-npm 生命周期脚本统一走 `build.mjs`，按操作系统自动选择对应脚本，因此各平台直接 `npm install` 均可。若 `dsh` 不是 npm 方式安装，可用（Windows）`set DSH_NODE_MODULES=C:\path\to\dsh\node_modules` 手动指定对齐目录。
-
-存在本地 `dsh` 安装时，`build.sh` / `build.bat` 通过生成的 tsconfig `paths` 覆盖，将 `@deepseek-ai/*` 的类型解析指向 dsh 安装的 `node_modules` 做版本对齐（保证类型检查与运行中的 harness API 一致）；仅影响类型检查，**不会写入 `node_modules`**，因此反复 `npm install` 是安全的。没有本机 `dsh` 时回退到 `package.json` 声明的 registry 依赖，见 `build.sh`。
-
 更新：`git pull` 后执行 `./build.sh`（Windows：`build.bat`），然后重启。
 
 卸载：`dsh plugin --profile web remove @spark-shield-lab/deepseek-harness-security-guard`
-
-包自带 bundle patch（`cordis.patch.yml`），插件自动挂载——无需在 `cordis.patch.yml` 里手工接线。默认带一份演示策略表（curl 需审批、提示词含私钥则拒绝），按需调整规则集。
 
 ## 控制面板
 
@@ -78,23 +79,6 @@ npm 生命周期脚本统一走 `build.mjs`，按操作系统自动选择对应�
 <p align="center">
   <img src="docs/assets/rule_demo.gif" alt="在安全守卫审查面板中在线编辑策略：优先级、模式、规则与内置基线列表" width="80%" />
 </p>
-
-插件还在会话视图环注册 **Security Review** tab：以表格展示该会话的判决，打开时每 4 秒轮询（在 DSH Settings 壳的 "Security Guard" 设置分区切换，`showSessionTab`）。
-
-面板生命周期与文件总线语义：[docs/architecture.md](docs/architecture.zh-CN.md)。
-
-完整参考——规则字段、算子（`eq` / `neq` / `contains` / `in` / `matches` / `regex`）、动作、内置基线表、优先级、观测模式——见 [docs/policy-table.md](docs/policy-table.zh-CN.md)。
-
-## 模型审查
-
-规则引擎之后的可选第二审查阶段（默认关闭，在 **Security Guard** 设置分区开启，见下文 [设置](#设置)）。被守护的步骤会渲染一条或多条审查提示词发给模型，返回的结构化判决与规则判决按“就严合并”（`block` > `ask` > `warn` > `allow`）。规则层已判 `block` 时直接短路，不再发起模型调用——干净通过零成本。
-
-- **模板**：内置三张基线模板卡片（`agent/pre-step` 恶意意图检测；`tools/pre-execute` 风险指令检测 + 意图偏离检测）；自定义模板是可编辑的提示词卡片，可绑定一个或多个 hook，在基线链之后执行。多模板判决就严合并，出现 `block` 即短路剩余模板。
-- **session 模式**：通过 harness `llm` 服务复用 agent 当前模型，零额外配置。**custom 模式**：调用专用端点，协议可选 `openai-chat`（默认）、`openai-responses`、`anthropic`，支持推理链档位（`off` / `low` / `medium` / `high`），默认 12 秒截止时间约束额外延迟。
-- **补审（make-up review）**：session 模式下，模型路由尚未就绪的步骤会先挂起，路由出现后补一次审查（仅审计、标注为迟到的判决）。
-- **失败即放行（fail-open）**：模型审查失败或输出不可解析时回退到规则判决，反之则不然。
-- **观测模式不破防**：`mode: monitor`（引擎级或单策略级）下，模型判决无法把已降级的 `warn` 再升级为拒绝——合并判决封顶在 `warn` 并标注降级。
-- **全程可观测**：每次调用——请求体、响应体、耗时、错误——都作为独立行持久化在判决日志中，展示在面板的“模型审查” tab。
 
 ## 设置
 
@@ -108,10 +92,26 @@ DSH Settings 壳里的 **Security Guard** 分区集中管理全局开关。所�
   <img src="docs/assets/settings.gif" alt="Security Guard 设置分区：防护开关、规则审查与模型审查开关、审查模型来源、补审、语言与显示选项" width="80%" />
 </p>
 
+## 模型审查
+
+规则引擎之后的可选第二审查阶段（默认关闭，在 **Security Guard** 设置分区开启，见上文 [设置](#设置)）。被守护的步骤会渲染一条或多条审查提示词发给模型，返回的结构化判决与规则判决按“就严合并”（`block` > `ask` > `warn` > `allow`）。规则层已判 `block` 时直接短路，不再发起模型调用——干净通过零成本。
+
+- **模板**：内置三张基线模板卡片（`agent/pre-step` 恶意意图检测；`tools/pre-execute` 风险指令检测 + 意图偏离检测）；自定义模板是可编辑的提示词卡片，可绑定一个或多个 hook，在基线链之后执行。多模板判决就严合并，出现 `block` 即短路剩余模板。
+- **session 模式**：通过 harness `llm` 服务复用 agent 当前模型，零额外配置。**custom 模式**：调用专用端点，协议可选 `openai-chat`（默认）、`openai-responses`、`anthropic`，支持推理链档位（`off` / `low` / `medium` / `high`），默认 12 秒截止时间约束额外延迟。
+- **补审（make-up review）**：session 模式下，模型路由尚未就绪的步骤会先挂起，路由出现后补一次审查（仅审计、标注为迟到的判决）。
+- **失败即放行（fail-open）**：模型审查失败或输出不可解析时回退到规则判决，反之则不然。
+- **观测模式不破防**：`mode: monitor`（引擎级或单策略级）下，模型判决无法把已降级的 `warn` 再升级为拒绝——合并判决封顶在 `warn` 并标注降级。
+- **全程可观测**：每次调用——请求体、响应体、耗时、错误——都作为独立行持久化在判决日志中，展示在面板的“模型审查” tab。
+
+## 延伸阅读
+
+- **[策略表参考](docs/policy-table.zh-CN.md)**——规则完整参考：字段、算子（`eq` / `neq` / `contains` / `in` / `matches` / `regex`）、动作、内置基线表、优先级、观测模式。
+- **[规则 × 平台命中矩阵](docs/rule-platform-matrix.zh-CN.md)**——每条内置防线在 Windows / Linux / macOS 上分别命中什么命令、防护什么风险场景，用例均按平台目录实测。
+- **[架构说明](docs/architecture.zh-CN.md)**——面板生命周期与文件总线语义。
+
 ## 后续计划
 
 - **远程策略服务**：调用外部策略/风险服务，实现部署级、集中管控的规则体系。
-- **扩展基线覆盖**：如Windows 专用命令。
 - **判决日志审计**：判决日志导出、存数据库、用于审计。
 
 ## 致谢
